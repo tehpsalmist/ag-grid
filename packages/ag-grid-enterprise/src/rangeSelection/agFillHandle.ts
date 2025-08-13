@@ -166,7 +166,6 @@ export class AgFillHandle extends AbstractSelectionHandle {
             rangeEndRow,
             beans: { rangeSvc },
         } = this;
-        const colLen = initialRange.columns.length;
 
         let finalRange: CellRange | undefined;
 
@@ -177,7 +176,7 @@ export class AgFillHandle extends AbstractSelectionHandle {
                 columnStart: initialRange.columns[0],
                 rowEndIndex: isX ? rangeEndRow.rowIndex : this.lastCellMarked!.rowIndex,
                 rowEndPinned: isX ? rangeEndRow.rowPinned : this.lastCellMarked!.rowPinned,
-                columnEnd: isX ? this.lastCellMarked!.column : initialRange.columns[colLen - 1],
+                columnEnd: isX ? this.lastCellMarked!.column : _last(initialRange.columns),
             });
         } else {
             const startRow = isX ? rangeStartRow : this.lastCellMarked;
@@ -188,7 +187,7 @@ export class AgFillHandle extends AbstractSelectionHandle {
                 columnStart: isX ? this.lastCellMarked!.column : initialRange.columns[0],
                 rowEndIndex: rangeEndRow.rowIndex,
                 rowEndPinned: rangeEndRow.rowPinned,
-                columnEnd: initialRange.columns[colLen - 1],
+                columnEnd: _last(initialRange.columns),
             });
         }
 

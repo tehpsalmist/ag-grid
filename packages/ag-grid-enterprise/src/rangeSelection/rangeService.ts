@@ -967,7 +967,7 @@ export class RangeService extends BeanStub implements NamedBean, IRangeService {
             if (newRanges.length - rangeCountBefore === 1) {
                 // Only one range result from the intersection.
                 // Copy the source range's id, since essentially we just reduced it's size
-                newRanges[newRanges.length - 1].id = range.id;
+                _last(newRanges).id = range.id;
             }
         }
         this.cellRanges = newRanges;
