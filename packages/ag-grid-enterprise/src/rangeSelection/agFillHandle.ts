@@ -241,18 +241,7 @@ export class AgFillHandle extends AbstractSelectionHandle {
     }
 
     private getFillHandleDirection(): 'x' | 'y' | 'xy' {
-        const direction = _getFillHandle(this.gos)?.direction;
-
-        if (!direction) {
-            return 'xy';
-        }
-
-        if (direction !== 'x' && direction !== 'y' && direction !== 'xy') {
-            _warn(177);
-            return 'xy';
-        }
-
-        return direction;
+        return _getFillHandle(this.gos)?.direction ?? 'xy';
     }
 
     private handleValueChanged(initialRange: CellRange, finalRange: CellRange, e: MouseEvent) {
