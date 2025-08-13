@@ -146,17 +146,9 @@ export class AgFillHandle extends AbstractSelectionHandle {
     }
 
     protected onDrag(_: MouseEvent) {
-        if (!this.initialPosition) {
-            const cellCtrl = this.cellCtrl;
-            if (!cellCtrl) {
-                return;
-            }
-
-            this.initialPosition = cellCtrl.cellPosition;
-        }
+        this.initialPosition ??= this.cellCtrl.cellPosition;
 
         const lastCellHovered = this.getLastCellHovered();
-
         if (lastCellHovered) {
             this.markPathFrom(this.initialPosition, lastCellHovered);
         }
@@ -420,7 +412,16 @@ export class AgFillHandle extends AbstractSelectionHandle {
         this.beans.rangeSvc!.clearCellRangeCellValues({ cellRanges: [cellRange] });
     }
 
-    private processValues(params: {
+    private processValues({
+        event,
+        values,
+        initialValues,
+        initialNonAggregatedValues,
+        initialFormattedValues,
+        col,
+        rowNode,
+        idx,
+    }: {
         event: MouseEvent;
         values: ValueContext[];
         initialValues: any[];
@@ -430,10 +431,11 @@ export class AgFillHandle extends AbstractSelectionHandle {
         rowNode: RowNode;
         idx: number;
     }): { value: any; fromUserFunction: boolean; sourceCol?: AgColumn; sourceRowNode?: RowNode } {
-        const { event, values, initialValues, initialNonAggregatedValues, initialFormattedValues, col, rowNode, idx } =
-            params;
-
-        const userFillOperation = _getFillHandle(this.gos)?.setFillValue;
+        const {
+            beans: { valueSvc },
+            gos,
+        } = this;
+        const userFillOperation = _getFillHandle(gos)?.setFillValue;
         const isVertical = this.dragAxis === 'y';
         let direction: 'up' | 'down' | 'left' | 'right';
 
@@ -444,14 +446,14 @@ export class AgFillHandle extends AbstractSelectionHandle {
         }
 
         if (userFillOperation) {
-            const params = _addGridCommonParams<FillOperationParams>(this.gos, {
+            const params = _addGridCommonParams<FillOperationParams>(gos, {
                 event,
                 values: values.map(({ value }) => value),
                 initialValues,
                 initialNonAggregatedValues,
                 initialFormattedValues,
                 currentIndex: idx,
-                currentCellValue: this.beans.valueSvc.getValue(col, rowNode),
+                currentCellValue: valueSvc.getValue(col, rowNode),
                 direction,
                 column: col,
                 rowNode: rowNode,
@@ -581,10 +583,6 @@ export class AgFillHandle extends AbstractSelectionHandle {
             const colLen = cellRange.columns.length;
 
             for (let i = 0; i < colLen; i++) {
-                const column = cellRange.columns[i];
-                const rowPos = { rowIndex: row.rowIndex, rowPinned: row.rowPinned };
-                const cellPos = { ...rowPos, column };
-                const cellInRange = rangeSvc!.isCellInSpecificRange(cellPos, cellRange);
                 const isInitialRow = _isSameRow(row, initialPosition);
 
                 if (isMovingUp) {
@@ -592,11 +590,13 @@ export class AgFillHandle extends AbstractSelectionHandle {
                 }
 
                 if (!isInitialRow) {
+                    const cellPos = { rowIndex: row.rowIndex, rowPinned: row.rowPinned, column: cellRange.columns[i] };
                     const cell = _getCellByPosition(beans, cellPos);
 
                     if (cell) {
                         this.markedCells.push(cell);
                         const cellComp = cell.comp;
+                        const cellInRange = rangeSvc!.isCellInSpecificRange(cellPos, cellRange);
 
                         if (!cellInRange) {
                             cellComp.toggleCss(FILL_HANDLE_CSS_CLASS_LEFT, i === 0);
@@ -614,10 +614,7 @@ export class AgFillHandle extends AbstractSelectionHandle {
             if (_isSameRow(row, endPosition)) {
                 break;
             }
-        } while (
-            // tslint:disable-next-line
-            (row = isMovingUp ? _getRowAbove(this.beans, row) : _getRowBelow(beans, row))
-        );
+        } while ((row = isMovingUp ? _getRowAbove(this.beans, row) : _getRowBelow(beans, row)));
     }
 
     private reduceVertical(initialPosition: CellPosition, endPosition: CellPosition) {

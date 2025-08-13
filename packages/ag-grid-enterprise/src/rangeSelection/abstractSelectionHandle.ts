@@ -25,12 +25,12 @@ export abstract class AbstractSelectionHandle extends Component {
 
     private cellHoverListener: (() => void) | undefined;
     private lastCellHovered: CellPosition | null | undefined;
-    protected changedCalculatedValues: boolean = false;
-    private dragging: boolean = false;
+    protected changedCalculatedValues = false;
+    private dragging = false;
 
     protected abstract type: SelectionHandleType;
     protected abstract shouldSkipCell(cell: CellPosition): boolean;
-    protected shouldDestroyOnEndDragging: boolean = false;
+    protected shouldDestroyOnEndDragging = false;
 
     public postConstruct() {
         const { dragSvc, rangeSvc } = this.beans;
@@ -38,7 +38,7 @@ export abstract class AbstractSelectionHandle extends Component {
             dragStartPixels: 0,
             eElement: this.getGui(),
             onDragStart: this.onDragStart.bind(this),
-            onDragging: (e: MouseEvent | Touch) => {
+            onDragging: (e) => {
                 this.dragging = true;
                 (rangeSvc as RangeService).autoScrollService.check(e as MouseEvent);
 
@@ -47,7 +47,7 @@ export abstract class AbstractSelectionHandle extends Component {
                     this.changedCalculatedValues = false;
                 }
             },
-            onDragStop: (e: MouseEvent | Touch) => {
+            onDragStop: (e) => {
                 this.dragging = false;
                 this.onDragEnd(e);
                 this.clearDragProperties();
@@ -142,9 +142,7 @@ export abstract class AbstractSelectionHandle extends Component {
         if (oldCellComp !== cellCtrl || !_isVisible(eGui)) {
             this.cellCtrl = cellCtrl;
             const eParentOfValue = cellCtrl.comp.getParentOfValue();
-            if (eParentOfValue) {
-                eParentOfValue.appendChild(eGui);
-            }
+            eParentOfValue?.appendChild(eGui);
         }
 
         this.cellRange = cellRange;
@@ -156,11 +154,8 @@ export abstract class AbstractSelectionHandle extends Component {
     }
 
     private removeListeners() {
-        const cellHoverListener = this.cellHoverListener;
-        if (cellHoverListener) {
-            cellHoverListener();
-            this.cellHoverListener = undefined;
-        }
+        this.cellHoverListener?.();
+        this.cellHoverListener = undefined;
     }
 
     public override destroy() {
