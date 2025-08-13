@@ -46,6 +46,12 @@ const FillHandleElement: ElementParams = {
     tag: 'div',
     cls: 'ag-fill-handle',
 };
+
+const FILL_HANDLE_CSS_CLASS_TOP = 'ag-selection-fill-top';
+const FILL_HANDLE_CSS_CLASS_BOTTOM = 'ag-selection-fill-bottom';
+const FILL_HANDLE_CSS_CLASS_LEFT = 'ag-selection-fill-left';
+const FILL_HANDLE_CSS_CLASS_RIGHT = 'ag-selection-fill-right';
+
 export class AgFillHandle extends AbstractSelectionHandle {
     private initialPosition: CellPosition | undefined;
     private initialXY: { x: number; y: number } | null;
@@ -496,11 +502,11 @@ export class AgFillHandle extends AbstractSelectionHandle {
                 continue;
             }
             const { comp } = cell;
-            comp.toggleCss('ag-selection-fill-top', false);
-            comp.toggleCss('ag-selection-fill-right', false);
-            comp.toggleCss('ag-selection-fill-bottom', false);
-            comp.toggleCss('ag-selection-fill-left', false);
-        }
+            comp.toggleCss(FILL_HANDLE_CSS_CLASS_TOP, false);
+            comp.toggleCss(FILL_HANDLE_CSS_CLASS_RIGHT, false);
+            comp.toggleCss(FILL_HANDLE_CSS_CLASS_BOTTOM, false);
+            comp.toggleCss(FILL_HANDLE_CSS_CLASS_LEFT, false);
+        });
 
         this.markedCells.length = 0;
 
@@ -593,12 +599,12 @@ export class AgFillHandle extends AbstractSelectionHandle {
                         const cellComp = cell.comp;
 
                         if (!cellInRange) {
-                            cellComp.toggleCss('ag-selection-fill-left', i === 0);
-                            cellComp.toggleCss('ag-selection-fill-right', i === colLen - 1);
+                            cellComp.toggleCss(FILL_HANDLE_CSS_CLASS_LEFT, i === 0);
+                            cellComp.toggleCss(FILL_HANDLE_CSS_CLASS_RIGHT, i === colLen - 1);
                         }
 
                         cellComp.toggleCss(
-                            isMovingUp ? 'ag-selection-fill-top' : 'ag-selection-fill-bottom',
+                            isMovingUp ? FILL_HANDLE_CSS_CLASS_TOP : FILL_HANDLE_CSS_CLASS_BOTTOM,
                             _isSameRow(row, endPosition)
                         );
                     }
@@ -631,7 +637,7 @@ export class AgFillHandle extends AbstractSelectionHandle {
                 if (cell) {
                     this.markedCells.push(cell);
 
-                    cell.comp.toggleCss('ag-selection-fill-bottom', _isSameRow(row, endPosition));
+                    cell.comp.toggleCss(FILL_HANDLE_CSS_CLASS_BOTTOM, _isSameRow(row, endPosition));
                 }
             }
             if (isLastRow) {
@@ -668,13 +674,13 @@ export class AgFillHandle extends AbstractSelectionHandle {
                     this.markedCells.push(cell);
                     const cellComp = cell.comp;
 
-                    cellComp.toggleCss('ag-selection-fill-top', _isSameRow(row, rangeStartRow));
-                    cellComp.toggleCss('ag-selection-fill-bottom', _isSameRow(row, rangeEndRow));
+                    cellComp.toggleCss(FILL_HANDLE_CSS_CLASS_TOP, _isSameRow(row, rangeStartRow));
+                    cellComp.toggleCss(FILL_HANDLE_CSS_CLASS_BOTTOM, _isSameRow(row, rangeEndRow));
                     if (isMovingLeft) {
                         this.isLeft = true;
-                        cellComp.toggleCss('ag-selection-fill-left', column === colsToMark[0]);
+                        cellComp.toggleCss(FILL_HANDLE_CSS_CLASS_LEFT, column === colsToMark[0]);
                     } else {
-                        cellComp.toggleCss('ag-selection-fill-right', column === _last(colsToMark));
+                        cellComp.toggleCss(FILL_HANDLE_CSS_CLASS_RIGHT, column === _last(colsToMark));
                     }
                 }
 
@@ -707,7 +713,7 @@ export class AgFillHandle extends AbstractSelectionHandle {
 
                 if (cell) {
                     this.markedCells.push(cell);
-                    cell.comp.toggleCss('ag-selection-fill-right', column === colsToMark[0]);
+                    cell.comp.toggleCss(FILL_HANDLE_CSS_CLASS_RIGHT, column === colsToMark[0]);
                 }
 
                 row = _getRowBelow(beans, row)!;
