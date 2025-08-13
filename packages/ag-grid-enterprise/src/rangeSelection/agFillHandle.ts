@@ -5,6 +5,7 @@ import type {
     CellRange,
     ElementParams,
     FillOperationParams,
+    GridOptionsService,
     RowNode,
     RowPosition,
 } from 'ag-grid-community';
@@ -111,13 +112,15 @@ export class AgFillHandle extends AbstractSelectionHandle {
     protected override updateValuesOnMove(e: MouseEvent) {
         super.updateValuesOnMove(e);
 
-        this.initialXY ??= _getNormalisedMousePosition(this.beans, e);
+        const { beans, gos } = this;
+
+        this.initialXY ??= _getNormalisedMousePosition(beans, e);
 
         const { x, y } = this.initialXY;
-        const { x: newX, y: newY } = _getNormalisedMousePosition(this.beans, e);
+        const { x: newX, y: newY } = _getNormalisedMousePosition(beans, e);
         const diffX = Math.abs(x - newX);
         const diffY = Math.abs(y - newY);
-        const allowedDirection = this.getFillHandleDirection();
+        const allowedDirection = getFillHandleDirection(gos);
         let direction: FillDirection;
 
         if (allowedDirection === 'xy') {
@@ -239,13 +242,9 @@ export class AgFillHandle extends AbstractSelectionHandle {
         });
     }
 
-    private getFillHandleDirection(): 'x' | 'y' | 'xy' {
-        return _getFillHandle(this.gos)?.direction ?? 'xy';
-    }
-
-    private handleValueChanged(initialRange: CellRange, finalRange: CellRange, e: MouseEvent) {
-        const { beans } = this;
-        const { rangeSvc, gos, valueSvc } = beans;
+    private handleValueChanged(initialRange: CellRange, finalRange: CellRange, event: MouseEvent) {
+        const { beans, gos } = this;
+        const { rangeSvc, valueSvc } = beans;
         const initialRangeEndRow = rangeSvc!.getRangeEndRow(initialRange);
         const initialRangeStartRow = rangeSvc!.getRangeStartRow(initialRange);
         const finalRangeEndRow = rangeSvc!.getRangeEndRow(finalRange);
@@ -258,7 +257,7 @@ export class AgFillHandle extends AbstractSelectionHandle {
             const columns = (
                 isVertical
                     ? initialRange.columns
-                    : initialRange.columns.filter((col) => finalRange.columns.indexOf(col) < 0)
+                    : initialRange.columns.filter((col) => !finalRange.columns.includes(col))
             ) as AgColumn[];
 
             const startRow = isVertical ? _getRowBelow(beans, finalRangeEndRow) : finalRangeStartRow;
@@ -286,7 +285,7 @@ export class AgFillHandle extends AbstractSelectionHandle {
         };
 
         const iterateAcrossCells = (column?: AgColumn, columns?: AgColumn[]) => {
-            let currentRow: RowPosition | undefined | null = this.isUp ? initialRangeEndRow : initialRangeStartRow;
+            let currentRow: RowPosition | null = this.isUp ? initialRangeEndRow : initialRangeStartRow;
             let finished = false;
 
             if (isVertical) {
@@ -343,7 +342,7 @@ export class AgFillHandle extends AbstractSelectionHandle {
                 withinInitialRange = updateInitialSet();
             } else {
                 const { value, fromUserFunction, sourceCol, sourceRowNode } = this.processValues({
-                    event: e,
+                    event,
                     values: currentValues,
                     initialValues,
                     initialNonAggregatedValues,
@@ -396,9 +395,7 @@ export class AgFillHandle extends AbstractSelectionHandle {
         };
 
         if (isVertical) {
-            initialRange.columns.forEach((col: AgColumn) => {
-                iterateAcrossCells(col);
-            });
+            initialRange.columns.forEach((col: AgColumn) => iterateAcrossCells(col));
         } else {
             const columns = (this.isLeft ? [...finalRange.columns].reverse() : finalRange.columns) as AgColumn[];
             iterateAcrossCells(undefined, columns);
@@ -729,4 +726,8 @@ export class AgFillHandle extends AbstractSelectionHandle {
 
         super.refresh(cellCtrl);
     }
+}
+
+function getFillHandleDirection(gos: GridOptionsService): 'x' | 'y' | 'xy' {
+    return _getFillHandle(gos)?.direction ?? 'xy';
 }
