@@ -57,7 +57,7 @@ export class AgFillHandle extends AbstractSelectionHandle {
     private initialXY: { x: number; y: number } | null;
     private lastCellMarked: CellPosition | undefined;
     private readonly markedCells: CellCtrl[] = [];
-    private readonly cellValues: FillValues[][] = [];
+    private readonly fillValues: FillValues[] = [];
 
     private dragAxis?: FillDirection;
     private isUp: boolean = false;
@@ -145,20 +145,45 @@ export class AgFillHandle extends AbstractSelectionHandle {
         return isRowNumberCol(cell.column);
     }
 
-    protected onDrag(_: MouseEvent) {
+    protected onDrag(event: MouseEvent) {
         this.initialPosition ??= this.cellCtrl.cellPosition;
 
         const lastCellHovered = this.getLastCellHovered();
         if (lastCellHovered) {
             this.markPathFrom(this.initialPosition, lastCellHovered);
+
+            const finalRange = this.getFinalRange();
+            if (finalRange) {
+                this.performFill({
+                    event,
+                    initialRange: this.cellRange,
+                    finalRange,
+                    target: this.fillValues,
+                });
+            }
         }
     }
 
-    protected onDragEnd(e: MouseEvent) {
+    protected onDragEnd(event: MouseEvent) {
         this.initialXY = null;
         if (!this.markedCells.length) {
             return;
         }
+
+        const finalRange = this.getFinalRange();
+
+        if (finalRange) {
+            this.performFill({
+                event,
+                initialRange: this.cellRange,
+                finalRange,
+                shouldUpdateRange: true,
+            });
+        }
+    }
+
+    private getFinalRange(): CellRange | undefined {
+        if (!this.lastCellMarked) return;
 
         const isX = this.dragAxis === 'x';
         const {
@@ -168,10 +193,8 @@ export class AgFillHandle extends AbstractSelectionHandle {
             beans: { rangeSvc },
         } = this;
 
-        let finalRange: CellRange | undefined;
-
         if (!this.isUp && !this.isLeft) {
-            finalRange = rangeSvc!.createCellRangeFromCellRangeParams({
+            return rangeSvc!.createCellRangeFromCellRangeParams({
                 rowStartIndex: rangeStartRow.rowIndex,
                 rowStartPinned: rangeStartRow.rowPinned,
                 columnStart: initialRange.columns[0],
@@ -182,23 +205,13 @@ export class AgFillHandle extends AbstractSelectionHandle {
         } else {
             const startRow = isX ? rangeStartRow : this.lastCellMarked;
 
-            finalRange = rangeSvc!.createCellRangeFromCellRangeParams({
+            return rangeSvc!.createCellRangeFromCellRangeParams({
                 rowStartIndex: startRow!.rowIndex,
                 rowStartPinned: startRow!.rowPinned,
                 columnStart: isX ? this.lastCellMarked!.column : initialRange.columns[0],
                 rowEndIndex: rangeEndRow.rowIndex,
                 rowEndPinned: rangeEndRow.rowPinned,
                 columnEnd: _last(initialRange.columns),
-            });
-        }
-
-        if (finalRange) {
-            // raising fill events for undo / redo
-            this.performFill({
-                event: e,
-                initialRange,
-                finalRange,
-                shouldUpdateRange: true,
             });
         }
     }
@@ -217,30 +230,54 @@ export class AgFillHandle extends AbstractSelectionHandle {
         initialRange,
         finalRange,
         shouldUpdateRange,
+        target,
     }: {
         event: MouseEvent;
         initialRange: CellRange;
         finalRange: CellRange;
         shouldUpdateRange?: boolean;
+        target?: FillValues[];
     }): void {
         const { eventSvc, rangeSvc } = this.beans;
 
-        eventSvc.dispatchEvent({ type: 'fillStart' });
+        if (!target) {
+            // raising fill events for undo / redo
+            eventSvc.dispatchEvent({ type: 'fillStart' });
+        }
 
-        this.handleValueChanged(initialRange, finalRange, event);
+        if (target) {
+            this.handleValueChanged(initialRange, finalRange, event, target);
+        } else {
+            this.fillValues.forEach(({ position, value }) => {
+                const rowNode = this.beans.rowModel.getRow(position.rowIndex);
+                if (!rowNode) {
+                    return;
+                }
+
+                rowNode.setDataValue(position.column as AgColumn, value, 'rangeSvc');
+            });
+        }
 
         if (shouldUpdateRange) {
             rangeSvc!.setCellRanges([finalRange]);
         }
 
-        eventSvc.dispatchEvent({
-            type: 'fillEnd',
-            initialRange,
-            finalRange,
-        });
+        if (!target) {
+            // raising fill events for undo / redo
+            eventSvc.dispatchEvent({
+                type: 'fillEnd',
+                initialRange,
+                finalRange,
+            });
+        }
     }
 
-    private handleValueChanged(initialRange: CellRange, finalRange: CellRange, event: MouseEvent) {
+    private handleValueChanged(
+        initialRange: CellRange,
+        finalRange: CellRange,
+        event: MouseEvent,
+        target?: FillValues[]
+    ) {
         const { beans, gos } = this;
         const { rangeSvc, valueSvc } = beans;
         const initialRangeEndRow = rangeSvc!.getRangeEndRow(initialRange);
@@ -280,6 +317,9 @@ export class AgFillHandle extends AbstractSelectionHandle {
             initialNonAggregatedValues.length = 0;
             initialFormattedValues.length = 0;
             idx = 0;
+            if (target) {
+                target.length = 0;
+            }
         };
 
         const iterateAcrossCells = (column?: AgColumn, columns?: AgColumn[]) => {
@@ -376,7 +416,14 @@ export class AgFillHandle extends AbstractSelectionHandle {
                         }
                     }
                     if (!fromUserFunction || cellValue !== currentValue) {
-                        rowNode.setDataValue(col, currentValue, 'rangeSvc');
+                        if (target) {
+                            target.push({
+                                position: { column: col, rowIndex: rowNode.rowIndex!, rowPinned: rowNode.rowPinned },
+                                value: currentValue,
+                            });
+                        } else {
+                            rowNode.setDataValue(col, currentValue, 'rangeSvc');
+                        }
                     } else {
                         skipValue = true;
                     }
@@ -491,7 +538,6 @@ export class AgFillHandle extends AbstractSelectionHandle {
 
     protected override clearValues() {
         this.clearMarkedPath();
-        this.clearCellValues();
 
         this.lastCellMarked = undefined;
 
@@ -515,15 +561,12 @@ export class AgFillHandle extends AbstractSelectionHandle {
         this.isUp = false;
         this.isLeft = false;
         this.isReduce = false;
-    }
 
-    private clearCellValues() {
-        this.cellValues.length = 0;
+        this.fillValues.length = 0;
     }
 
     private markPathFrom(initialPosition: CellPosition, currentPosition: CellPosition) {
         this.clearMarkedPath();
-        this.clearCellValues();
 
         if (this.dragAxis === 'y') {
             if (_isSameRow(currentPosition, initialPosition)) {
