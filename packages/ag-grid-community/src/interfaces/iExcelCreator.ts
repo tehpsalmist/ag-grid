@@ -520,6 +520,9 @@ interface ExcelFileParams {
      * @default 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
      */
     mimeType?: string;
+
+    /** Optional password to protect the Excel file. */
+    password?: string;
 }
 
 export interface ExcelExportParams extends ExcelFileParams, ExcelWorksheetConfigParams, ExportParams<ExcelRow[]> {}

@@ -211,9 +211,305 @@ const getMultipleSheetsAsExcelCompressed = (params: ExcelExportMultipleSheetPara
         return Promise.resolve(undefined);
     }
 
-    return zipContainer.getZipFile(mimeType);
+    const zipFile = zipContainer.getZipFile(mimeType);
+
+    if (params.password) {
+        return zipFile.then((file) => {
+            // encrypt the zip file with the provided password
+            return file;
+        });
+    }
+
+    return zipFile;
 };
 
+const ENCRYPTION_INFO_PREFIX = Uint8Array.from([0x04, 0x00, 0x04, 0x00, 0x40, 0x00, 0x00, 0x00]); // First 4 bytes are the version number, second 4 bytes are reserved.
+const PACKAGE_ENCRYPTION_CHUNK_SIZE = 4096;
+const PACKAGE_OFFSET = 8; // First 8 bytes are the size of the stream
+
+// Block keys used for encryption
+const BLOCK_KEYS = {
+    dataIntegrity: {
+        hmacKey: Uint8Array.from([0x5f, 0xb2, 0xad, 0x01, 0x0c, 0xb9, 0xe1, 0xf6]),
+        hmacValue: Uint8Array.from([0xa0, 0x67, 0x7f, 0x02, 0xb2, 0x2c, 0x84, 0x33]),
+    },
+    key: Uint8Array.from([0x14, 0x6e, 0x0b, 0xe7, 0xab, 0xac, 0xd0, 0xd6]),
+    verifierHash: {
+        input: Uint8Array.from([0xfe, 0xa7, 0xd2, 0x76, 0x3b, 0x4b, 0x9e, 0x79]),
+        value: Uint8Array.from([0xd7, 0xaa, 0x0f, 0x6d, 0x30, 0x61, 0x34, 0x4e]),
+    },
+};
+
+const encryptBlobWithPassword = async (blob: Blob, password: string): Promise<Blob> => {
+    // Generate a random key to use to encrypt the document. Excel uses 32 bytes. We'll use the password to encrypt this key.
+    // N.B. The number of bits needs to correspond to an algorithm available in crypto (e.g. aes-256-cbc).
+    const blobAsBuffer = await blob.arrayBuffer();
+    const packageKey = crypto.getRandomValues(new Uint8Array(32));
+    const packageSalt = crypto.getRandomValues(new Uint8Array(16));
+    const keySalt = crypto.getRandomValues(new Uint8Array(16));
+
+    // Create the encryption info. We'll use this for all of the encryption operations and for building the encryption info XML entry
+    const encryptionInfo: Record<
+        string,
+        | {
+              cipherAlgorithm: string;
+              cipherChaining: string;
+              saltValue: Uint8Array;
+              hashAlgorithm: string;
+              hashSize: number;
+              blockSize: number;
+              keyBits: number;
+              spinCount?: number;
+          }
+        | {
+              encryptedHmacKey: string;
+              encryptedHmacValue: string;
+          }
+    > = {
+        package: {
+            // Info on the encryption of the package.
+            cipherAlgorithm: 'AES', // Cipher algorithm to use. Excel uses AES.
+            cipherChaining: 'ChainingModeCBC', // Cipher chaining mode to use. Excel uses CBC.
+            saltValue: packageSalt, // Random value to use as encryption salt. Excel uses 16 bytes.
+            hashAlgorithm: 'SHA512', // Hash algorithm to use. Excel uses SHA512.
+            hashSize: 64, // The size of the hash in bytes. SHA512 results in 64-byte hashes
+            blockSize: 16, // The number of bytes used to encrypt one block of data. It MUST be at least 2, no greater than 4096, and a multiple of 2. Excel uses 16
+            keyBits: packageKey.length * 8, // The number of bits in the package key.
+        },
+        key: {
+            // Info on the encryption of the package key.
+            cipherAlgorithm: 'AES', // Cipher algorithm to use. Excel uses AES.
+            cipherChaining: 'ChainingModeCBC', // Cipher chaining mode to use. Excel uses CBC.
+            saltValue: keySalt, // Random value to use as encryption salt. Excel uses 16 bytes.
+            hashAlgorithm: 'SHA512', // Hash algorithm to use. Excel uses SHA512.
+            hashSize: 64, // The size of the hash in bytes. SHA512 results in 64-byte hashes
+            blockSize: 16, // The number of bytes used to encrypt one block of data. It MUST be at least 2, no greater than 4096, and a multiple of 2. Excel uses 16
+            spinCount: 100000, // The number of times to iterate on a hash of a password. It MUST NOT be greater than 10,000,000. Excel uses 100,000.
+            keyBits: 256, // The length of the key to generate from the password. Must be a multiple of 8. Excel uses 256.
+        },
+    };
+
+    /* Package Encryption */
+
+    // Encrypt package using the package key.
+    const encryptedPackage = _cryptPackage(
+        true,
+        encryptionInfo.package.cipherAlgorithm,
+        encryptionInfo.package.cipherChaining,
+        encryptionInfo.package.hashAlgorithm,
+        encryptionInfo.package.blockSize,
+        encryptionInfo.package.saltValue,
+        packageKey,
+        blobAsBuffer
+    );
+
+    /* Data Integrity */
+
+    // Create the data integrity fields used by clients for integrity checks.
+    // First generate a random array of bytes to use in HMAC. The docs say to use the same length as the key salt, but Excel seems to use 64.
+    const hmacKey = crypto.getRandomValues(new Uint8Array(64));
+
+    // Then create an initialization vector using the package encryption info and the appropriate block key.
+    const hmacKeyIV = _createIV(
+        encryptionInfo.package.hashAlgorithm,
+        encryptionInfo.package.saltValue,
+        encryptionInfo.package.blockSize,
+        BLOCK_KEYS.dataIntegrity.hmacKey
+    );
+
+    // Use the package key and the IV to encrypt the HMAC key
+    const encryptedHmacKey = _crypt(
+        true,
+        encryptionInfo.package.cipherAlgorithm,
+        encryptionInfo.package.cipherChaining,
+        packageKey,
+        hmacKeyIV,
+        hmacKey
+    );
+
+    // Now create the HMAC
+    const hmacValue = _hmac(encryptionInfo.package.hashAlgorithm, hmacKey, encryptedPackage);
+
+    // Next generate an initialization vector for encrypting the resulting HMAC value.
+    const hmacValueIV = _createIV(
+        encryptionInfo.package.hashAlgorithm,
+        encryptionInfo.package.saltValue,
+        encryptionInfo.package.blockSize,
+        BLOCK_KEYS.dataIntegrity.hmacValue
+    );
+
+    // Now encrypt the value
+    const encryptedHmacValue = _crypt(
+        true,
+        encryptionInfo.package.cipherAlgorithm,
+        encryptionInfo.package.cipherChaining,
+        packageKey,
+        hmacValueIV,
+        hmacValue
+    );
+
+    // Put the encrypted key and value on the encryption info
+    encryptionInfo.dataIntegrity = {
+        encryptedHmacKey,
+        encryptedHmacValue,
+    };
+
+    /* Key Encryption */
+
+    // Convert the password to an encryption key
+    const key = _convertPasswordToKey(
+        password,
+        encryptionInfo.key.hashAlgorithm,
+        encryptionInfo.key.saltValue,
+        encryptionInfo.key.spinCount,
+        encryptionInfo.key.keyBits,
+        BLOCK_KEYS.key
+    );
+
+    // Encrypt the package key with the
+    encryptionInfo.key.encryptedKeyValue = _crypt(
+        true,
+        encryptionInfo.key.cipherAlgorithm,
+        encryptionInfo.key.cipherChaining,
+        key,
+        encryptionInfo.key.saltValue,
+        packageKey
+    );
+
+    /* Verifier hash */
+
+    // Create a random byte array for hashing
+    const verifierHashInput = crypto.getRandomValues(new Uint8Array(16));
+
+    // Create an encryption key from the password for the input
+    const verifierHashInputKey = _convertPasswordToKey(
+        password,
+        encryptionInfo.key.hashAlgorithm,
+        encryptionInfo.key.saltValue,
+        encryptionInfo.key.spinCount,
+        encryptionInfo.key.keyBits,
+        BLOCK_KEYS.verifierHash.input
+    );
+
+    // Use the key to encrypt the verifier input
+    encryptionInfo.key.encryptedVerifierHashInput = _crypt(
+        true,
+        encryptionInfo.key.cipherAlgorithm,
+        encryptionInfo.key.cipherChaining,
+        verifierHashInputKey,
+        encryptionInfo.key.saltValue,
+        verifierHashInput
+    );
+
+    // Create a hash of the input
+    const verifierHashValue = _hash(encryptionInfo.key.hashAlgorithm, verifierHashInput);
+
+    // Create an encryption key from the password for the hash
+    const verifierHashValueKey = _convertPasswordToKey(
+        password,
+        encryptionInfo.key.hashAlgorithm,
+        encryptionInfo.key.saltValue,
+        encryptionInfo.key.spinCount,
+        encryptionInfo.key.keyBits,
+        BLOCK_KEYS.verifierHash.value
+    );
+
+    // Use the key to encrypt the hash value
+    encryptionInfo.key.encryptedVerifierHashValue = _crypt(
+        true,
+        encryptionInfo.key.cipherAlgorithm,
+        encryptionInfo.key.cipherChaining,
+        verifierHashValueKey,
+        encryptionInfo.key.saltValue,
+        verifierHashValue
+    );
+
+    // Build the encryption info buffer
+    const encryptionInfoBuffer = _buildEncryptionInfo(encryptionInfo);
+
+    // Create a new CFB
+    let output = cfb.utils.cfb_new();
+
+    // Add the encryption info and encrypted package
+    cfb.utils.cfb_add(output, 'EncryptionInfo', encryptionInfoBuffer);
+    cfb.utils.cfb_add(output, 'EncryptedPackage', encryptedPackage);
+
+    // Delete the SheetJS entry that is added at initialization
+    cfb.utils.cfb_del(output, '\u0001Sh33tJ5');
+
+    // Write to a buffer and return
+    output = cfb.write(output);
+
+    return output;
+};
+
+/**
+ * Encrypt/decrypt the package
+ * @param encrypt - True to encrypt, false to decrypt
+ * @param cipherAlgorithm - The cipher algorithm
+ * @param cipherChaining - The cipher chaining mode
+ * @param hashAlgorithm - The hash algorithm
+ * @param blockSize - The IV block size
+ * @param saltValue - The salt
+ * @param key - The encryption key
+ * @param input - The package input
+ * @returns The output
+ * @private
+ */
+const _cryptPackage = (
+    encrypt: boolean,
+    cipherAlgorithm: string,
+    cipherChaining: string,
+    hashAlgorithm: string,
+    blockSize: number,
+    saltValue: ArrayBuffer,
+    key: ArrayBuffer,
+    input: ArrayBuffer
+) => {
+    // The first 8 bytes is supposed to be the length, but it seems like it is really the length - 4..
+    const outputChunks = [];
+    const offset = encrypt ? 0 : PACKAGE_OFFSET;
+
+    // The package is encoded in chunks. Encrypt/decrypt each and concat.
+    let i = 0,
+        start = 0,
+        end = 0;
+    while (end < input.length) {
+        start = end;
+        end = start + PACKAGE_ENCRYPTION_CHUNK_SIZE;
+        if (end > input.length) end = input.length;
+
+        // Grab the next chunk
+        let inputChunk = input.slice(start + offset, end + offset);
+
+        // Pad the chunk if it is not an integer multiple of the block size
+        const remainder = inputChunk.length % blockSize;
+        if (remainder) inputChunk = Buffer.concat([inputChunk, Buffer.alloc(blockSize - remainder)]);
+
+        // Create the initialization vector
+        const iv = this._createIV(hashAlgorithm, saltValue, blockSize, i);
+
+        // Encrypt/decrypt the chunk and add it to the array
+        const outputChunk = this._crypt(encrypt, cipherAlgorithm, cipherChaining, key, iv, inputChunk);
+        outputChunks.push(outputChunk);
+
+        i++;
+    }
+
+    // Concat all of the output chunks.
+    let output = Buffer.concat(outputChunks);
+
+    if (encrypt) {
+        // Put the length of the package in the first 8 bytes
+        output = Buffer.concat([this._createUInt32LEBuffer(input.length, PACKAGE_OFFSET), output]);
+    } else {
+        // Truncate the buffer to the size in the prefix
+        const length = input.readUInt32LE(0);
+        output = output.slice(0, length);
+    }
+
+    return output;
+};
 export const getMultipleSheetsAsExcel = (params: ExcelExportMultipleSheetParams): Blob | undefined => {
     const { data, fontSize, author, activeSheetIndex } = params;
     const mimeType = params.mimeType || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
@@ -270,6 +566,9 @@ export class ExcelCreator
             author: mergedParams.author,
             mimeType: mergedParams.mimeType,
         };
+        if (mergedParams.password) {
+            exportParams.password = mergedParams.password;
+        }
 
         this.packageCompressedFile(exportParams).then((packageFile) => {
             if (packageFile) {
