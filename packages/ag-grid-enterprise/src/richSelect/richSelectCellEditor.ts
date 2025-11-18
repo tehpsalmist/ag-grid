@@ -12,7 +12,6 @@ import { AgRichSelect } from '../widgets/agRichSelect';
 
 export class RichSelectCellEditor<TData = any, TValue = any, TContext = any> extends AgAbstractCellEditor {
     protected override params: RichCellEditorParams<TData, TValue>;
-    private focusAfterAttached: boolean;
     protected eEditor: AgRichSelect<TValue>;
     private isAsync: boolean = false;
     private currentSearchRequest: number = 0;
@@ -22,7 +21,7 @@ export class RichSelectCellEditor<TData = any, TValue = any, TContext = any> ext
     }
 
     public initialiseEditor(_params: RichCellEditorParams<TData, TValue>): void {
-        const { cellStartedEdit, values, eventKey } = this.params;
+        const { values, eventKey } = this.params;
 
         if (_missing(values)) {
             _warn(180);
@@ -54,7 +53,6 @@ export class RichSelectCellEditor<TData = any, TValue = any, TContext = any> ext
         this.addManagedListeners(richSelect, {
             fieldPickerValueSelected: this.onEditorPickerValueSelected.bind(this),
         });
-        this.focusAfterAttached = cellStartedEdit;
     }
 
     private onEditorPickerValueSelected(e: FieldPickerValueSelectedEvent): void {
@@ -237,17 +235,15 @@ export class RichSelectCellEditor<TData = any, TValue = any, TContext = any> ext
     // we need to have the gui attached before we can draw the virtual rows, as the
     // virtual row logic needs info about the gui state.
     public afterGuiAttached(): void {
-        const { focusAfterAttached, params } = this;
-
         setTimeout(() => {
             if (!this.isAlive()) {
                 return;
             }
 
             const richSelect = this.eEditor;
-            const { allowTyping, eventKey, cellStartedEdit } = params;
+            const { allowTyping, eventKey, cellStartedEdit } = this.params;
 
-            if (focusAfterAttached) {
+            if (cellStartedEdit) {
                 const focusableEl = richSelect.getFocusableElement() as HTMLInputElement;
                 focusableEl.focus();
 
